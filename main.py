@@ -76,16 +76,47 @@ _deployed_agents: dict[str, DeployedAgent] = {}
 _adk_toolset: Optional[McpToolset] = None
 session_service = _build_session_service()
 
-# ── Single-agent mode: env vars injected by Docker at container start ─────────
-# When AGENT_ID is set, this container is dedicated to one agent.
-AGENT_ID    = os.getenv("AGENT_ID", "")
-AGENT_NAME  = os.getenv("AGENT_NAME", "")
-SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "")
-AGENT_LLM   = os.getenv("AGENT_LLM", "")
-AGENT_API_KEY = os.getenv("AGENT_API_KEY", "")
+# ── Single-agent mode env vars ────────────────────────────────────────────────
+AGENT_ID          = os.getenv("AGENT_ID", "")
+AGENT_NAME        = os.getenv("AGENT_NAME", "")
+SYSTEM_PROMPT     = os.getenv("SYSTEM_PROMPT", "")
+AGENT_LLM         = os.getenv("AGENT_LLM", "")
+AGENT_API_KEY     = os.getenv("AGENT_API_KEY", "")
 AGENT_TEMPERATURE = float(os.getenv("AGENT_TEMPERATURE", "0.7"))
-# Comma-separated MCP server SSE URLs injected at deploy time
 MCP_SERVER_URLS_RAW = os.getenv("MCP_SERVER_URLS", "")
+
+
+# ── Schemas (defined before lifespan so they can be used there) ───────────────
+
+class ToolConfig(BaseModel):
+    type: str = "mcp"
+    name: str = ""
+    url: str = ""
+    credential_ref: str = ""
+
+
+class DeployRequest(BaseModel):
+    agent_id: str
+    agent_name: str
+    system_prompt: str
+    llm: str = ""
+    api_key: str = ""
+    temperature: float = 0.7
+    tools: list[ToolConfig] = []
+
+
+class ChatRequest(BaseModel):
+    message: str
+    agent_id: str = ""
+    agent_name: str = "Agent"
+    llm: str = ""
+    api_key: str = ""
+    system_prompt: str = ""
+    temperature: float = 0.7
+    session_id: str = ""
+    max_retries: int = MAX_RETRIES
+    base_backoff: int = BASE_BACKOFF
+    tools: list[ToolConfig] = []
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -93,8 +124,12 @@ MCP_SERVER_URLS_RAW = os.getenv("MCP_SERVER_URLS", "")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _adk_toolset
-    _adk_toolset = McpToolset(connection_params=SseConnectionParams(url=MCP_SSE_URL))
-    log.info("Default ADK toolset initialised for %s", MCP_SSE_URL)
+    # Only connect to MCP if a real URL is configured and not the default placeholder
+    if MCP_SSE_URL and "localhost:8080" not in MCP_SSE_URL:
+        _adk_toolset = McpToolset(connection_params=SseConnectionParams(url=MCP_SSE_URL))
+        log.info("Default ADK toolset initialised for %s", MCP_SSE_URL)
+    else:
+        log.info("No MCP server configured — skipping default toolset")
 
     # Auto-deploy if running in single-agent container mode
     if AGENT_ID and AGENT_NAME and SYSTEM_PROMPT:
@@ -133,40 +168,6 @@ app.add_middleware(
 )
 
 
-# ── Schemas ───────────────────────────────────────────────────────────────────
-
-class ToolConfig(BaseModel):
-    type: str = "mcp"
-    name: str = ""
-    url: str = ""
-    credential_ref: str = ""
-
-
-class DeployRequest(BaseModel):
-    """Sent by the backend when deploying an agent."""
-    agent_id: str
-    agent_name: str
-    system_prompt: str
-    llm: str = ""           # e.g. "groq/llama-3.3-70b-versatile" or "gemini-1.5-flash"
-    api_key: str = ""       # provider API key (from credentials store)
-    temperature: float = 0.7
-    tools: list[ToolConfig] = []
-
-
-class ChatRequest(BaseModel):
-    message: str
-    agent_id: str = ""      # if set, uses deployed agent config
-    agent_name: str = "Agent"
-    llm: str = ""
-    api_key: str = ""
-    system_prompt: str = ""
-    temperature: float = 0.7
-    session_id: str = ""
-    max_retries: int = MAX_RETRIES
-    base_backoff: int = BASE_BACKOFF
-    tools: list[ToolConfig] = []
-
-
 # ── Model resolution ──────────────────────────────────────────────────────────
 
 def _resolve_model(llm: str, api_key: str = ""):
@@ -193,14 +194,14 @@ def _resolve_model(llm: str, api_key: str = ""):
 
 def _build_toolsets(tools: list[ToolConfig]) -> list:
     if not tools:
-        return [_adk_toolset]
+        return [_adk_toolset] if _adk_toolset else []
     toolsets = []
     for t in tools:
         if t.type == "mcp" and t.url:
             toolsets.append(McpToolset(connection_params=SseConnectionParams(url=t.url)))
         else:
             log.warning("Skipping unsupported tool type '%s' / empty url", t.type)
-    return toolsets if toolsets else [_adk_toolset]
+    return toolsets if toolsets else ([_adk_toolset] if _adk_toolset else [])
 
 
 # ── Core streaming runner ─────────────────────────────────────────────────────
@@ -224,7 +225,7 @@ async def _stream_adk(
             model=model,
             name=agent_name.replace(" ", "_"),
             instruction=system_prompt,
-            tools=toolsets,
+            tools=toolsets if toolsets else [],
         ),
         app_name="greater-agents",
         session_service=session_service,
