@@ -1,8 +1,7 @@
-google-adk[extensions]
+google-adk
 fastapi
 uvicorn[standard]
 python-dotenv
 pydantic
 httpx
 litellm
-redis  # optional — only needed if REDIS_URL is set

@@ -2,16 +2,17 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies first (layer cache)
+# Install system deps
+RUN apt-get update -qq && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+# Install Python deps first (cached layer)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy app
 COPY main.py .
 
-# Agent config injected at runtime via env vars
-# AGENT_ID, AGENT_NAME, SYSTEM_PROMPT, LLM, API_KEY, TEMPERATURE, PORT
 ENV PORT=8001
-
 EXPOSE 8001
 
 CMD ["python", "main.py"]
