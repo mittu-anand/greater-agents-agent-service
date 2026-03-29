@@ -406,16 +406,17 @@ async def agent_chat(request: ChatRequest):
                 base_backoff=request.base_backoff,
             ):
                 yield chunk
-                # Track final response
-                if b'"type": "final"' in chunk or b'"type":"final"' in chunk:
+                # chunk is a string like "data: {...}\n\n"
+                if '"type": "final"' in chunk or '"type":"final"' in chunk:
                     try:
                         import json as _json
-                        data = _json.loads(chunk.decode().replace("data: ", "").strip())
+                        data_str = chunk.replace("data: ", "").strip()
+                        data = _json.loads(data_str)
                         if data.get("type") == "final":
                             final_text = data.get("content", "")
                     except Exception:
                         pass
-                elif b'"type": "error"' in chunk or b'"type":"error"' in chunk:
+                elif '"type": "error"' in chunk or '"type":"error"' in chunk:
                     run_status = "error"
         except Exception:
             run_status = "error"
