@@ -84,6 +84,7 @@ AGENT_LLM         = os.getenv("AGENT_LLM", "")
 AGENT_API_KEY     = os.getenv("AGENT_API_KEY", "")
 AGENT_TEMPERATURE = float(os.getenv("AGENT_TEMPERATURE", "0.7"))
 MCP_SERVER_URLS_RAW = os.getenv("MCP_SERVER_URLS", "")
+BACKEND_URL       = os.getenv("BACKEND_URL", "")  # e.g. http://your-backend:3001
 
 
 # ── Schemas (defined before lifespan so they can be used there) ───────────────
@@ -206,7 +207,25 @@ def _build_toolsets(tools: list[ToolConfig]) -> list:
 
 # ── Core streaming runner ─────────────────────────────────────────────────────
 
-async def _stream_adk(
+async def _post_run(agent_id: str, trigger_type: str, status: str,
+                    started_at: str, ended_at: str, output: dict) -> None:
+    """Post a run record to the backend (best-effort, never fails the chat)."""
+    if not BACKEND_URL or not agent_id:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            await client.post(
+                f"{BACKEND_URL}/api/agents/{agent_id}/runs",
+                json={
+                    "trigger_type": trigger_type,
+                    "status": status,
+                    "started_at": started_at,
+                    "ended_at": ended_at,
+                    "output": output,
+                },
+            )
+    except Exception as e:
+        log.debug("Failed to post run record: %s", e)
     message: str,
     agent_name: str,
     model,
@@ -366,17 +385,51 @@ async def agent_chat(request: ChatRequest):
     toolsets = _build_toolsets(tools)
     session_id = request.session_id or str(uuid.uuid4())
 
+    from datetime import datetime, timezone
+    started_at = datetime.now(timezone.utc).isoformat()
+
+    async def stream_with_run_record():
+        final_text = ""
+        run_status = "completed"
+        try:
+            async for chunk in _stream_adk(
+                message=request.message,
+                agent_name=agent_name,
+                model=model,
+                system_prompt=system_prompt,
+                toolsets=toolsets,
+                session_id=session_id,
+                max_retries=request.max_retries,
+                base_backoff=request.base_backoff,
+            ):
+                yield chunk
+                # Track final response
+                if b'"type": "final"' in chunk or b'"type":"final"' in chunk:
+                    try:
+                        import json as _json
+                        data = _json.loads(chunk.decode().replace("data: ", "").strip())
+                        if data.get("type") == "final":
+                            final_text = data.get("content", "")
+                    except Exception:
+                        pass
+                elif b'"type": "error"' in chunk or b'"type":"error"' in chunk:
+                    run_status = "error"
+        except Exception:
+            run_status = "error"
+            raise
+        finally:
+            ended_at = datetime.now(timezone.utc).isoformat()
+            await _post_run(
+                agent_id=request.agent_id,
+                trigger_type="manual",
+                status=run_status,
+                started_at=started_at,
+                ended_at=ended_at,
+                output={"message": request.message, "response": final_text[:500]},
+            )
+
     return StreamingResponse(
-        _stream_adk(
-            message=request.message,
-            agent_name=agent_name,
-            model=model,
-            system_prompt=system_prompt,
-            toolsets=toolsets,
-            session_id=session_id,
-            max_retries=request.max_retries,
-            base_backoff=request.base_backoff,
-        ),
+        stream_with_run_record(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
