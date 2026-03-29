@@ -226,6 +226,9 @@ async def _post_run(agent_id: str, trigger_type: str, status: str,
             )
     except Exception as e:
         log.debug("Failed to post run record: %s", e)
+
+
+async def _stream_adk(
     message: str,
     agent_name: str,
     model,
