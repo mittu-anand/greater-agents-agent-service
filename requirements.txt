@@ -1,7 +1,24 @@
-google-adk
+# ── Core (always installed) ───────────────────────────────────────────────────
 fastapi
 uvicorn[standard]
 python-dotenv
-pydantic
+pydantic>=2.0
 httpx
+
+# ── Google ADK (default framework) ───────────────────────────────────────────
+google-adk
 litellm
+
+# ── LangGraph & LangChain (lazy-loaded when framework="langgraph"/"langchain") ─
+langgraph>=1.1.3
+langchain>=1.2.13
+langchain-core
+langchain-openai
+langchain-google-genai
+langchain-groq
+langchain-anthropic
+langchain-ollama
+langchain-mcp-adapters
+
+# ── CrewAI (lazy-loaded when framework="crewai") ──────────────────────────────
+crewai>=1.12.2
