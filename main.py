@@ -298,6 +298,17 @@ async def _stream_adk(
         err_str = str(run_error)
         is_rate = any(x in err_str for x in ["429", "RESOURCE_EXHAUSTED", "RateLimitError", "rate_limit_exceeded"])
         is_exhausted = "limit: 0" in err_str or "GenerateRequestsPerDay" in err_str
+        is_tool_fail = "tool_use_failed" in err_str or "failed_generation" in err_str
+
+        if is_tool_fail and attempt < request.max_retries:
+            wait = 2 * (attempt + 1)
+            yield f"data: {json.dumps({'type': 'tool_result', 'tool': 'retry', 'result': f'Tool call format error — retrying ({attempt + 1}/{request.max_retries})…'})}\n\n"
+            await asyncio.sleep(wait)
+            continue
+
+        if is_tool_fail:
+            yield f"data: {json.dumps({'type': 'error', 'content': 'The model failed to format a tool call correctly after multiple retries. Try rephrasing your request or switching to a different model (e.g. groq/mixtral-8x7b-32768).'})}\n\n"
+            return
 
         if is_rate and is_exhausted:
             yield f"data: {json.dumps({'type': 'error', 'content': 'Daily quota exhausted. Switch model or API key.'})}\n\n"
