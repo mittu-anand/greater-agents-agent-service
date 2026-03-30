@@ -213,39 +213,41 @@ async def agent_chat(request: ChatRequest):
     started_at = datetime.now(timezone.utc).isoformat()
 
     async def _stream_with_record():
-        final_text = ""
-        run_status = "completed"
+        import json
+        full_text = ""
         try:
             async for chunk in runner.stream(
                 message      = request.message,
                 session_id   = session_id,
-                max_retries  = request.max_retries,
-                base_backoff = request.base_backoff,
+                max_retries  = request.max_retries or 3,
+                base_backoff = request.base_backoff or 2,
             ):
-                yield chunk
-                if '"type": "final"' in chunk or '"type":"final"' in chunk:
+                if chunk.startswith("data:"):
                     try:
-                        import json as _j
-                        data = _j.loads(chunk.replace("data: ", "").strip())
-                        if data.get("type") == "final":
-                            final_text = data.get("content", "")
+                        ev = json.loads(chunk[5:])
+                        if ev.get("type") == "text":
+                            full_text += ev.get("delta", "")
                     except Exception:
                         pass
-                elif '"type": "error"' in chunk or '"type":"error"' in chunk:
-                    run_status = "error"
-        except Exception:
-            run_status = "error"
-            raise
+                    yield chunk
+                else:
+                    full_text += chunk
+                    yield f"data: {json.dumps({'type': 'text', 'delta': chunk})}\n\n"
+        except Exception as e:
+            log.exception("Runner stream error: %s", e)
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         finally:
-            ended_at = datetime.now(timezone.utc).isoformat()
-            await _post_run(
-                agent_id     = request.agent_id,
-                trigger_type = "manual",
-                status       = run_status,
-                started_at   = started_at,
-                ended_at     = ended_at,
-                output       = {"message": request.message, "response": final_text[:500]},
-            )
+            try:
+                await _post_run(
+                    agent_id     = request.agent_id,
+                    trigger_type = "manual",
+                    status       = "completed" if full_text else "failed",
+                    started_at   = started_at,
+                    ended_at     = datetime.now(timezone.utc).isoformat(),
+                    output       = {"message": request.message, "response": full_text[:500]},
+                )
+            except Exception:
+                pass
 
     return StreamingResponse(
         _stream_with_record(),

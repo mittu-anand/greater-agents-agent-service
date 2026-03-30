@@ -126,10 +126,20 @@ class AdkAgentRunner(BaseAgentRunner):
             ),
             app_name=app_name,
             session_service=get_session_service(),
-            auto_create_session=True,
         )
         user_message = types.Content(role="user", parts=[types.Part(text=message)])
         final_text = ""
+
+        # Ensure the session exists in the service (replaces auto_create_session=True)
+        svc = get_session_service()
+        try:
+            # ADK SessionService interface uses get_session(), not get() or exists()
+            session = await svc.get_session(app_name=app_name, user_id=user_id, session_id=session_id)
+            if session is None:
+                log.info("ADK: creating new session %s for user %s", session_id, user_id)
+                await svc.create_session(app_name=app_name, user_id=user_id, session_id=session_id)
+        except Exception as e:
+            log.warning("ADK: session check/create failed: %s", e)
 
         for attempt in range(max_retries + 1):
             run_error = None

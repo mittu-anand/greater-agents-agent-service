@@ -105,10 +105,11 @@ class LangGraphAgentRunner(BaseAgentRunner):
     ) -> AsyncGenerator[str, None]:
         try:
             from langgraph.prebuilt import create_react_agent
-        except ImportError:
+        except ImportError as e:
+            log.error("LangGraph import failed: %s", e)
             yield self._error(
-                "LangGraph is not installed on this agent service. "
-                "Add 'langgraph langchain-core' to requirements.txt and redeploy."
+                f"LangGraph is not installed or incomplete on this agent service ({e}). "
+                "Ensure standard 'langgraph' and 'langchain-core' are in requirements.txt and redeploy with --no-cache."
             )
             return
 
@@ -121,11 +122,11 @@ class LangGraphAgentRunner(BaseAgentRunner):
             tools = _build_mcp_tools(self.tools, self.extra_config)
             checkpointer = _build_checkpointer(self.extra_config)
 
-            # Allow custom system message prefix via extra_config
+            # Use 'prompt' instead of 'state_modifier' for compatibility with newer LangGraph versions
             react_graph = create_react_agent(
                 model,
                 tools=tools,
-                state_modifier=self.system_prompt,
+                prompt=self.system_prompt,
                 checkpointer=checkpointer,
             )
 

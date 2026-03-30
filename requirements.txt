@@ -10,9 +10,11 @@ google-adk
 litellm
 
 # ── LangGraph & LangChain (lazy-loaded when framework="langgraph"/"langchain") ─
-langgraph>=1.1.3
-langchain>=1.2.13
+langgraph>=0.2.0
+langchain>=0.3.0
 langchain-core
+langchain-community
+langchain-classic
 langchain-openai
 langchain-google-genai
 langchain-groq

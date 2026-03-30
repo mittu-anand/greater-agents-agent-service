@@ -79,13 +79,14 @@ class LangChainAgentRunner(BaseAgentRunner):
         base_backoff: int,
     ) -> AsyncGenerator[str, None]:
         try:
-            from langchain.agents import AgentExecutor, create_openai_tools_agent, create_react_agent
+            from langchain_classic.agents import AgentExecutor, create_openai_tools_agent, create_react_agent
             from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
             from langchain_core.messages import SystemMessage
-        except ImportError:
+        except ImportError as e:
+            log.error("LangChain import failed: %s", e)
             yield self._error(
-                "LangChain is not installed on this agent service. "
-                "Add 'langchain langchain-core' to requirements.txt and redeploy."
+                f"LangChain is not installed or incomplete on this agent service ({e}). "
+                "Ensure standard 'langchain' and 'langchain-core' are in requirements.txt and redeploy with --no-cache."
             )
             return
 
